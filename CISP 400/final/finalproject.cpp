@@ -1,0 +1,498 @@
+// finalproject.cpp
+// Aidan Anderson, CISP 400
+// 12-14-23
+
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <random>
+#include <chrono>
+#include <string>
+
+using namespace std;
+
+enum CellState { NONE, WALL, BATTERY, ROBOT };
+
+enum Direction { //0    1     2      3
+                 NORTH, EAST, SOUTH, WEST, RANDOM };
+
+
+//CELL CLASS STORES ONLY STATE INFORMATION
+class Cell {
+    
+  private:
+    CellState state;
+
+  public:
+
+    Cell(CellState s) {
+      state = s;
+    }
+
+    void set_state(CellState new_state) { state = new_state; }
+
+    CellState get_state() { return state; }
+};
+
+
+//CONTAINER FOR A TWO DIMENSIONAL ARRAY OF CELLS
+class Board {
+
+  private:
+
+    int width, height;
+
+    vector<vector<Cell>> board;
+
+    void initialize_board();
+
+  public:
+
+    Board(int w, int h) {
+      width = w;
+      height = h;
+      initialize_board();
+    }
+
+    //Returns a copy of the cell
+    Cell get_cell(int x, int y) { return board[y][x]; }
+
+    //Modifies a cell on the board
+    void set_cell(int x, int y, CellState state) { board[y][x].set_state(state); }
+
+    int get_width() { return width; }
+    int get_height() { return height; }
+
+    void clear();
+
+    //UTIL FUNCTION
+    void print_board();
+
+};
+
+void Board::clear() {
+
+  for(int x = 1; x <= width; x++) {
+    for(int y = 1 ; y <= height; y++) {
+      if(get_cell(x, y).get_state() == CellState::NONE) continue;
+      set_cell(x, y, CellState::NONE);
+    }
+  }
+}
+
+void Board::initialize_board() {
+  int W = width + 2;
+  int H = height + 2;
+
+  for(int row = 0; row < H; row++) {
+
+    if(row == 0 || row == H - 1) {
+      board.push_back(vector<Cell>(W, Cell(CellState::WALL)));
+      continue;
+    }
+
+    vector<Cell> r(W, Cell(CellState::NONE));
+    r[0].set_state(CellState::WALL);
+    r[W - 1].set_state(CellState::WALL);
+
+    board.push_back(r);
+  }
+}
+
+void Board::print_board() {
+
+  for(int j = 0; j < height + 2; j++) {
+
+    for(int i = 0; i < width + 2; i++) {
+
+      if(board[j][i].get_state() == CellState::NONE) cout << "\e[30m";
+      if(board[j][i].get_state() == CellState::WALL) cout << "\e[31m";
+      if(board[j][i].get_state() == CellState::BATTERY) cout << "\e[32m";
+      if(board[j][i].get_state() == CellState::ROBOT) cout << "\e[33m";
+
+      cout << board[j][i].get_state() << " " << "\e[0m";
+    }
+
+    cout << endl;
+  }
+}
+
+
+class Robot {
+
+  private:
+    Board *board = nullptr;
+
+    int health = 10;
+    int x_pos, y_pos;
+    int rounds_survived = 0;
+
+    vector<vector<int>> genes;
+
+  public:
+
+    Robot(Board *b) {
+      board = b;
+      x_pos = rand() % board->get_width() + 1;
+      y_pos = rand() % board->get_height() + 1;
+    }
+
+    Robot(Board *b, int x, int y) {
+      board = b;
+      x_pos = x;
+      y_pos = y;
+    }
+
+    ~Robot() {
+      board = nullptr;
+    }
+
+    int get_health() { return health; }
+    int x() { return x_pos; }
+    int y() { return y_pos; }
+    int get_rounds() { return rounds_survived; }
+
+    vector<vector<int>> get_genes() { return genes; }
+    vector<int> check_sensors();
+
+    void add_round() { rounds_survived += 1; }
+    void reset_rounds() { rounds_survived = 0; }
+    void add_health(int h) { health += h; }
+    void set_x(int x) { x_pos = x; }
+    void set_y(int y) { y_pos = y; }    
+    void move(Direction);
+    
+    void set_genes(vector<vector<int>> g) { genes = g; }
+    void generate_genes();
+
+    //UTIL FUNCTIONS
+    void print_stats();
+    void print_genes();
+};
+
+void Robot::print_stats() {
+  cout << "End Position: (" << x_pos << ", " << y_pos << ")" << endl;
+  cout << "Total Rounds Survived: " << rounds_survived << endl << endl;
+}
+
+void Robot::print_genes() {
+
+  cout.width(2);
+
+  for(int i = 0 ; i < 16; i++) {
+
+    cout << i << ": [";
+    for(int j = 0; j < 4; j++) cout << genes[i][j] << " ";
+    cout << "- " << genes[i][4] << "]";
+
+    cout.width(5);
+
+    if((i + 1) % 4 == 0) {
+      cout << endl;
+      cout.width(2);
+    }
+  }
+  cout << endl;
+}
+
+//Returns an ordered list of cellstates/integers: {N, E, S, W}
+vector<int> Robot::check_sensors() {
+
+  const int S_AMOUNT = 4;   
+  vector<int> sensors;
+
+  for(int dir = 0; dir < S_AMOUNT; dir++) {
+
+    Cell cell(CellState::NONE);
+
+    if(dir == Direction::NORTH)
+      cell = board->get_cell(x_pos, y_pos - 1);
+    else if(dir == Direction::SOUTH)
+      cell = board->get_cell(x_pos, y_pos + 1);
+    else if(dir == Direction::EAST)
+      cell = board->get_cell(x_pos + 1, y_pos);
+    else if(dir == Direction::WEST)
+      cell = board->get_cell(x_pos - 1, y_pos);
+
+    sensors.push_back(cell.get_state());
+  }
+
+  return sensors;
+}
+
+//Moves the robot and updates its position on the board
+//Assumes that collision has already been checked!!!
+void Robot::move(Direction dir) {
+
+  int old_x = x_pos;
+  int old_y = y_pos;
+
+  if(dir == Direction::NORTH)
+    set_y(y_pos - 1);
+  else if(dir == Direction::SOUTH)
+    set_y(y_pos + 1);
+  else if(dir == Direction::EAST)
+    set_x(x_pos + 1);
+  else if(dir == Direction::WEST)
+    set_x(x_pos - 1);
+
+  board->set_cell(old_x, old_y, CellState::NONE);
+  board->set_cell(x_pos, y_pos, CellState::ROBOT);
+}
+
+void Robot::generate_genes() {
+
+  const int NUM_GENES = 16;
+  const int GENE_LEN = 5;
+  const int D_AMOUNT = 4;
+  const int STATES = 3;
+
+  for(int g = 0; g < NUM_GENES; g++) {
+
+    //First four nucleotides are directions
+    vector<int> gene(GENE_LEN);
+    for(int l = 0; l < GENE_LEN - 1; l++) gene[l] = rand() % STATES;
+
+    //Last nucleotide is direction decision
+    gene[GENE_LEN - 1] = rand() % D_AMOUNT;
+
+    genes.push_back(gene);
+  }
+
+}
+
+
+//FUNCTION PROTOTYPES
+bool check_collision(Board*, Robot&, vector<int>, Direction);
+void test_robots(Board*, vector<Robot>&);
+void generate_batteries(Board*, int);
+Direction check_genes(Robot&, vector<int>);
+void run(int);
+void next_generation(Board*, vector<Robot>&);
+Robot reproduce(Board*, Robot, Robot);
+void sort_robots(vector<Robot>&);
+
+int main() {
+
+  srand(time(nullptr));
+
+  run(50);
+
+  return 0;
+}
+
+void run(int generations) {
+
+  const int POP_SIZE = 200;
+
+  Board board(10, 10);
+
+  vector<Robot> population;
+
+  //Initialize population
+  for(int i = 0; i < POP_SIZE; i++) {
+    Robot r(&board);
+    r.generate_genes();
+    population.push_back(r);
+  }
+
+  int curr_gen = 0;
+  
+  cout << "Testing robots for " << generations << " generations..." << endl;
+  cout << "This may take some time." << endl;
+
+  while(curr_gen < generations) {
+
+    cout << "Generation " << curr_gen << endl;
+    
+    //Tests all robots in population
+    test_robots(&board, population);
+
+    curr_gen++;
+
+    if(curr_gen < generations) next_generation(&board, population);
+  }
+
+  cout << "Done!" << endl;
+  cout << "Print? (y/n)" << endl;
+  string line;
+  getline(cin, line);
+
+  if(line != "y") return;
+
+  sort_robots(population);
+  cout << "\nBEST ROBOT IN GENERATION "<< curr_gen << ":" << endl;
+  population[0].print_stats();
+  cout << "GENES:" << endl;
+  population[0].print_genes();
+
+}
+
+void test_robots(Board* board, vector<Robot>& population) {
+
+  const int ROUND_CAP = 100000;
+  int p_size = population.size();
+
+  int index = 0;
+  Robot *current = &population[index];
+
+  while(index < p_size) {
+
+    bool robot_not_dead = true;
+    board->set_cell(current->x(), current->y(), CellState::ROBOT);
+    generate_batteries(board, 20);
+
+    while(robot_not_dead) {
+
+      vector<int> sensors = current->check_sensors();
+
+      Direction dir = check_genes(*current, sensors);
+
+      //If random, get direction from last gene
+      if(dir == 4) dir = static_cast<Direction>(current->get_genes()[15][4]);
+
+      bool collides = check_collision(board, *current, sensors, dir);
+
+      if(!collides) current->move(dir);
+
+      current->add_round();
+      current->add_health(-1);
+
+      if(current->get_health() <= 0) robot_not_dead = false;
+      else if(current->get_rounds() >= ROUND_CAP) robot_not_dead = false;
+
+    }
+    
+    board->clear();
+
+    index++;
+    current = &population[index];
+  }
+
+}
+
+void generate_batteries(Board* board, int num) {
+
+  int W = board->get_width();
+  int H = board->get_height();
+
+  if(num > (W * H) - 1) num = (W * H) - 1;
+
+  int count = 0;
+  while(count < num) {
+
+    int rand_x = rand() % W + 1;
+    int rand_y = rand() % H + 1;
+
+    if(board->get_cell(rand_x, rand_y).get_state() == CellState::ROBOT) continue;
+    if(board->get_cell(rand_x, rand_y).get_state() == CellState::BATTERY) continue;
+
+    board->set_cell(rand_x, rand_y, CellState::BATTERY);
+    count++;
+  }
+
+}
+
+bool check_collision(Board* board, Robot& robot, vector<int> sensors, Direction dir) {
+
+  const int BATTERY_CHARGE = 5;
+
+  //Overlaps battery
+  if(sensors[dir] == 2) {
+    robot.add_health(BATTERY_CHARGE);
+    //Add another battery
+    generate_batteries(board, 1);
+    return false;
+  }
+
+  //Hits wall
+  if(sensors[dir] == 1) return true;
+
+  return false;
+}
+
+Direction check_genes(Robot& robot, vector<int> sensors) {
+
+  vector<vector<int>> genes = robot.get_genes();
+
+  Direction dir = Direction::RANDOM;
+
+  for(vector<int> g : genes) {
+
+    for(int i = 0; i < sensors.size(); i++) {
+      if(sensors[i] != g[i]) break;
+
+      if(i != sensors.size() - 1) continue;
+
+      dir = static_cast<Direction>(g[g.size() - 1]);
+      return dir;
+    }
+
+  }
+
+  return dir;
+}
+
+void next_generation(Board *b, vector<Robot>& population) {
+
+  const int HALF_POP = population.size() / 2;
+
+  auto rule = [](Robot r1, Robot r2) { return r1.get_rounds() > r2.get_rounds(); };
+
+  sort(population.begin(), population.end(), rule);
+
+  population.erase(population.begin() + HALF_POP, population.end());
+
+  vector<Robot> new_gen;
+
+  for(int c = 0; c < population.size(); c += 2) {
+    Robot &mother = population[c];
+    Robot &father = population[c + 1];
+
+    mother.reset_rounds();
+    father.reset_rounds();
+
+    Robot brother = reproduce(b, mother, father);
+    Robot sister = reproduce(b, mother, father);
+
+    new_gen.push_back(brother);
+    new_gen.push_back(sister);
+  }
+
+  population.insert(population.begin() + HALF_POP, new_gen.begin(), new_gen.end());
+}
+
+Robot reproduce(Board *b, Robot mother, Robot father) {
+
+  const int HALF = 8;
+
+  Robot offspring(b);
+
+  vector<vector<int>> genes_m = mother.get_genes();
+  vector<vector<int>> genes_f = father.get_genes();
+
+  unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+
+  //Randomize both mother and father genes
+  shuffle(genes_m.begin(), genes_m.end(), default_random_engine(seed));
+  shuffle(genes_f.begin(), genes_f.end(), default_random_engine(seed));
+
+  vector<vector<int>> child_genes;
+
+  //First half of mother's genes
+  child_genes.insert(child_genes.begin(), genes_m.begin(), genes_m.begin() + HALF);
+  
+  //Second half of father's genes
+  child_genes.insert(child_genes.begin() + HALF, genes_f.end() - HALF, genes_f.end());
+
+  offspring.set_genes(child_genes);
+
+  return offspring;
+}
+
+void sort_robots(vector<Robot>& population) {
+  
+  auto rule = [](Robot r1, Robot r2) { return r1.get_rounds() > r2.get_rounds(); };
+
+  sort(population.begin(), population.end(), rule);
+}
